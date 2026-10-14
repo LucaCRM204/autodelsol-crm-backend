@@ -11,6 +11,14 @@
  * equipo/líder configurado para recibir estos leads; si no, caen a un
  * round-robin parejo entre todos los vendedores activos.
  *
+ * El bot de WhatsApp manda `ownerId` = el usuario dueño del número
+ * que recibió el mensaje (ver asignarLeadBot):
+ *   - número de un VENDEDOR      -> el lead es de ese vendedor
+ *   - número de GERENCIA/SUPERV. -> se reparte entre su equipo
+ *     (distribución ponderada si el equipo está configurado en
+ *      distribucion_equipos; si no, round-robin dentro del equipo)
+ *   - sin ownerId                -> round-robin general, como antes
+ *
  * Autenticación: header `x-api-key`, validado contra LEAD_API_KEYS en
  * el .env (ver middleware/intakeAuth.js). Formato de esa variable:
  *   whatsapp-bot:clave123;zapier-formularios:clave456
@@ -62,13 +70,56 @@ async function asignarVendedor(leadId, fuente) {
   return vendedor.id;
 }
 
+// Round-robin por equipo (cuando el equipo no usa distribución ponderada)
+const roundRobinPorEquipo = new Map();
+
+/**
+ * Asignación de un lead del bot según de quién es el número de WhatsApp.
+ * Devuelve { userId, motivo } o { userId: null }.
+ */
+async function asignarLeadBot(ownerId) {
+  const id = parseInt(ownerId, 10);
+  if (!id) return { userId: await asignarVendedor(null, 'whatsapp-bot'), motivo: 'round-robin general (sin dueño)' };
+
+  const [[owner]] = await pool.execute('SELECT id, name, role, active FROM users WHERE id = ?', [id]);
+  if (!owner) {
+    console.warn(`[whatsapp-bot] ownerId ${id} no existe — round-robin general`);
+    return { userId: await asignarVendedor(null, 'whatsapp-bot'), motivo: 'round-robin general (dueño inexistente)' };
+  }
+
+  // Número de un vendedor: el lead es suyo (si está dado de baja, se reparte)
+  if (owner.role === 'vendedor') {
+    if (owner.active) return { userId: owner.id, motivo: `número propio de ${owner.name}` };
+    console.warn(`[whatsapp-bot] ${owner.name} (${owner.id}) está inactivo — round-robin general`);
+    return { userId: await asignarVendedor(null, 'whatsapp-bot'), motivo: 'round-robin general (vendedor inactivo)' };
+  }
+
+  // Número de gerencia/supervisión: se reparte en su equipo
+  try {
+    const r = await dist.siguienteVendedor(owner.id, null, 'whatsapp-bot');
+    if (r.gestionado && r.userId) return { userId: r.userId, motivo: `distribución ponderada del equipo de ${owner.name}` };
+  } catch (e) {
+    console.error(`[whatsapp-bot] distribución ${owner.id}:`, e.message);
+  }
+
+  const equipo = await dist.getVendedoresDeEquipo(owner.id);
+  if (equipo.length) {
+    const i = (roundRobinPorEquipo.get(owner.id) || 0) % equipo.length;
+    roundRobinPorEquipo.set(owner.id, (i + 1) % equipo.length);
+    return { userId: equipo[i].id, motivo: `round-robin del equipo de ${owner.name}` };
+  }
+
+  console.warn(`[whatsapp-bot] ${owner.name} (${owner.id}) no tiene vendedores activos debajo — round-robin general`);
+  return { userId: await asignarVendedor(null, 'whatsapp-bot'), motivo: 'round-robin general (equipo vacío)' };
+}
+
 // ========================================
 // POST /api/webhooks/whatsapp-bot
 // Leads que entran por el bot de WhatsApp
 // ========================================
 router.post('/whatsapp-bot', intakeAuth, async (req, res) => {
   try {
-    const { nombre, telefono, modelo, notas, formaPago } = req.body;
+    const { nombre, telefono, modelo, notas, formaPago, ownerId } = req.body;
 
     console.log('[whatsapp-bot] Recibido:', JSON.stringify(req.body));
 
@@ -79,10 +130,11 @@ router.post('/whatsapp-bot', intakeAuth, async (req, res) => {
       });
     }
 
-    const assigned_to = await asignarVendedor(null, 'whatsapp-bot');
+    const { userId: assigned_to, motivo } = await asignarLeadBot(ownerId);
     if (!assigned_to) {
       return res.status(500).json({ error: 'No hay vendedores activos para asignar' });
     }
+    console.log(`[whatsapp-bot] ${nombre} (${telefono}) -> usuario ${assigned_to} | ${motivo}`);
 
     const [result] = await pool.execute(
       `INSERT INTO leads
@@ -113,6 +165,7 @@ router.post('/whatsapp-bot', intakeAuth, async (req, res) => {
       lead,
       leadId: result.insertId,
       assignedTo: assigned_to,
+      motivo,
       fuente: 'whatsapp-bot'
     });
   } catch (error) {

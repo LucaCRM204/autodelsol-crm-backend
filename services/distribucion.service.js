@@ -29,14 +29,16 @@ const PROFUNDIDAD_MAX = 6;
 
 const scopeDe = (equipoId) => `lider:${equipoId}`;
 
-// IDs que nunca deben recibir leads: contenedores de proveedores y
-// usuarios basura. Copiado de VENDEDORES_EXCLUIDOS_EMANUEL en webhooks.js.
-const EXCLUIDOS = new Set([
-  13, 198, 380,                            // Datos, Datos viejos, Datos victor
-  136,                                     // FAVIER VENDEDOR
-  266,                                     // Ruleta
-  299, 300, 301, 302, 303, 312, 335, 349,  // Contenedores USUARIOS_PROVEEDORES
-]);
+// IDs que nunca deben recibir leads (contenedores, usuarios basura).
+// La lista vieja era la de GoldPlan y en Auto del Sol pisaba usuarios
+// reales (ej: el 13 es un vendedor). Ahora se configura por .env:
+//   DIST_EXCLUIDOS=198,380
+const EXCLUIDOS = new Set(
+  String(process.env.DIST_EXCLUIDOS || '')
+    .split(',')
+    .map((x) => parseInt(x.trim(), 10))
+    .filter(Number.isInteger)
+);
 
 // ─────────────────────────────────────────────────────────────
 // Helpers puros (testeables sin base)
