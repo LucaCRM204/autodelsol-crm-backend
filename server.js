@@ -1,6 +1,6 @@
 /**
  * ============================================
- * SERVER.JS — AUTO DEL SOL CRM (Peugeot)
+ * SERVER.JS — AUTO DEL SOL CRM (Fiat)
  * Con WebSockets en tiempo real, sin módulo de scoring
  * ============================================
  */
@@ -134,7 +134,7 @@ app.get('/api/health', (_req, res) => res.json({ ok: true, ts: new Date().toISOS
 
 // Ruta raíz
 app.get('/', (_req, res) => res.json({
-  message: 'Auto del Sol CRM Backend API',
+  message: 'Auto del Sol Fiat CRM Backend API',
   version: '1.0.0',
   features: ['realtime', 'presence', 'activity-tracking', 'auto-reassignment', 'metas', 'distribucion-ponderada']
 }));
@@ -189,11 +189,11 @@ setTimeout(() => {
 
 const PORT = process.env.PORT || 3001;
 
-server.listen(PORT, () => {
+require('./bootstrap')().finally(() => server.listen(PORT, () => {
   console.log(`\n🚀 Backend escuchando en puerto ${PORT}`);
   console.log(`⚡ WebSockets habilitados`);
   console.log(`📊 Reportes de actividad disponibles`);
   console.log(`🎯 Módulo de Metas activo`);
   console.log(`⚖️  Distribución ponderada activa`);
-  console.log(`📥 Webhooks activos: /api/webhooks/whatsapp-bot, /api/webhooks/zapier-formularios\n`);
-});
+  console.log(`📥 Webhooks activos: /api/webhooks/whatsapp-bot, /api/webhooks/zapier-formularios, /api/webhooks/sheets\n`);
+}));
